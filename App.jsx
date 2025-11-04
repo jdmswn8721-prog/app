@@ -766,90 +766,68 @@ function App() {
     }
 
     const container = tableRefs.current[activeSheetIndex];
-    if (!container) {
-      setError('현재 시트를 찾을 수 없습니다.');
-      return;
-    }
+    const currentHtml = container
+      ? container.innerHTML
+      : sheets[activeSheetIndex]?.content || '';
 
-    const table = container.querySelector('table');
-    if (!table) {
+    if (!currentHtml) {
       setError('삭제할 테이블을 찾을 수 없습니다.');
       return;
     }
 
-    const previousHtml = container.innerHTML;
-
     try {
-      const cellsToClear = [];
-      const visited = new Set();
+      const parser = new DOMParser();
+      const doc = parser.parseFromString(currentHtml, 'text/html');
+      const table = doc.querySelector('table');
 
+      if (!table) {
+        setError('삭제할 테이블을 찾을 수 없습니다.');
+        return;
+      }
+
+      let mutated = false;
       selectedCells.forEach((cellId) => {
-        let cell = container.querySelector(`[data-cell-id="${cellId}"]`);
-
-        if (!cell) {
-          const idParts = cellId.replace('cell-', '').split('-').map(Number);
-          if (idParts.length === 2) {
-            const [rowIndex, colIndex] = idParts;
-            const rows = Array.from(table.querySelectorAll('tr'));
-            if (rows[rowIndex]) {
-              const rowCells = Array.from(rows[rowIndex].querySelectorAll('th, td'));
-              let currentCol = 0;
-              for (const candidate of rowCells) {
-                const colspan = parseInt(candidate.getAttribute('colspan')) || 1;
-                if (colIndex >= currentCol && colIndex < currentCol + colspan) {
-                  cell = candidate;
-                  break;
-                }
-                currentCol += colspan;
-              }
-            }
-          }
-        }
-
-        if (cell && !visited.has(cell)) {
-          visited.add(cell);
-          cellsToClear.push(cell);
+        const cell = table.querySelector(`[data-cell-id="${cellId}"]`);
+        if (cell) {
+          cell.innerHTML = '';
+          cell.removeAttribute('style');
+          mutated = true;
         }
       });
 
-      if (cellsToClear.length === 0) {
+      if (!mutated) {
         setError('삭제할 셀을 찾을 수 없습니다.');
         return;
       }
 
-      cellsToClear.forEach((cell) => {
-        cell.innerHTML = '';
-        cell.removeAttribute('style');
-      });
+      const updatedHtml = doc.body.innerHTML || '';
 
-      refreshCellIds(container);
+      if (container) {
+        container.innerHTML = updatedHtml;
+        refreshCellIds(container);
 
-      if (!validateTableStructure(container)) {
-        restoreTableHtml(container, previousHtml);
-        setError('셀 삭제로 인해 표 구조가 깨져 작업을 되돌렸습니다.');
-        return;
+        if (!validateTableStructure(container)) {
+          restoreTableHtml(container, currentHtml);
+          setError('셀 삭제로 인해 표 구조가 깨져 작업을 되돌렸습니다.');
+          return;
+        }
       }
 
-      const containerHtml = container.innerHTML;
-      if (previousHtml !== containerHtml) {
-        setSheets((prev) =>
-          prev.map((sheet, idx) =>
-            idx === activeSheetIndex ? { ...sheet, content: containerHtml } : sheet
-          )
-        );
-        setUndoStack((prev) => [...prev, previousHtml]);
-        setRedoStack([]);
-      }
-
+      setSheets((prev) =>
+        prev.map((sheet, idx) =>
+          idx === activeSheetIndex ? { ...sheet, content: updatedHtml } : sheet
+        )
+      );
+      setUndoStack((prev) => [...prev, currentHtml]);
+      setRedoStack([]);
       setSelectedCells(new Set());
       editSessionRef.current = { active: false, snapshot: '', sheetIndex: null };
       setError('');
     } catch (err) {
-      restoreTableHtml(container, previousHtml);
       setError('셀 삭제 중 오류가 발생했습니다: ' + err.message);
       console.error('셀 삭제 오류:', err);
     }
-  }, [selectedCells, activeSheetIndex]);
+  }, [selectedCells, activeSheetIndex, sheets]);
 
   useEffect(() => {
     const handleKeydown = (event) => {

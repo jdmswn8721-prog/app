@@ -1,4 +1,4 @@
-import React, { useState, useRef, useEffect } from 'react';
+import React, { useState, useRef, useEffect, useCallback } from 'react';
 import * as XLSX from 'xlsx';
 import html2canvas from 'html2canvas';
 
@@ -759,43 +759,60 @@ function App() {
     }
   };
 
-  const handleDeleteCells = () => {
-    if (selectedCells.size === 0 || !tableRefs.current[activeSheetIndex]) {
+  const handleDeleteCells = useCallback(() => {
+    if (selectedCells.size === 0) {
       setError('삭제할 셀을 선택해주세요.');
       return;
     }
 
     const container = tableRefs.current[activeSheetIndex];
+    if (!container) {
+      setError('현재 시트를 찾을 수 없습니다.');
+      return;
+    }
+
     const table = container.querySelector('table');
-    if (!table) return;
+    if (!table) {
+      setError('삭제할 테이블을 찾을 수 없습니다.');
+      return;
+    }
 
     const previousHtml = container.innerHTML;
 
     try {
-      refreshCellIds(container);
-      const rows = Array.from(table.querySelectorAll('tr'));
-      const cellsToClear = new Map();
+      const cellsToClear = [];
+      const visited = new Set();
 
-      rows.forEach((row) => {
-        const cells = Array.from(row.querySelectorAll('th, td'));
-        cells.forEach((cell) => {
-          const cellId = cell.getAttribute('data-cell-id') || getCellId(cell);
-          if (cellId && selectedCells.has(cellId)) {
-            cellsToClear.set(cellId, cell);
+      selectedCells.forEach((cellId) => {
+        let cell = container.querySelector(`[data-cell-id="${cellId}"]`);
+
+        if (!cell) {
+          const idParts = cellId.replace('cell-', '').split('-').map(Number);
+          if (idParts.length === 2) {
+            const [rowIndex, colIndex] = idParts;
+            const rows = Array.from(table.querySelectorAll('tr'));
+            if (rows[rowIndex]) {
+              const rowCells = Array.from(rows[rowIndex].querySelectorAll('th, td'));
+              let currentCol = 0;
+              for (const candidate of rowCells) {
+                const colspan = parseInt(candidate.getAttribute('colspan')) || 1;
+                if (colIndex >= currentCol && colIndex < currentCol + colspan) {
+                  cell = candidate;
+                  break;
+                }
+                currentCol += colspan;
+              }
+            }
           }
-        });
+        }
+
+        if (cell && !visited.has(cell)) {
+          visited.add(cell);
+          cellsToClear.push(cell);
+        }
       });
 
-      if (cellsToClear.size === 0) {
-        selectedCells.forEach((cellId) => {
-          const fallback = container.querySelector(`[data-cell-id="${cellId}"]`);
-          if (fallback) {
-            cellsToClear.set(cellId, fallback);
-          }
-        });
-      }
-
-      if (cellsToClear.size === 0) {
+      if (cellsToClear.length === 0) {
         setError('삭제할 셀을 찾을 수 없습니다.');
         return;
       }
@@ -814,13 +831,16 @@ function App() {
       }
 
       const containerHtml = container.innerHTML;
-      setSheets((prev) =>
-        prev.map((sheet, idx) =>
-          idx === activeSheetIndex ? { ...sheet, content: containerHtml } : sheet
-        )
-      );
-      setUndoStack((prev) => [...prev, previousHtml]);
-      setRedoStack([]);
+      if (previousHtml !== containerHtml) {
+        setSheets((prev) =>
+          prev.map((sheet, idx) =>
+            idx === activeSheetIndex ? { ...sheet, content: containerHtml } : sheet
+          )
+        );
+        setUndoStack((prev) => [...prev, previousHtml]);
+        setRedoStack([]);
+      }
+
       setSelectedCells(new Set());
       editSessionRef.current = { active: false, snapshot: '', sheetIndex: null };
       setError('');
@@ -829,7 +849,7 @@ function App() {
       setError('셀 삭제 중 오류가 발생했습니다: ' + err.message);
       console.error('셀 삭제 오류:', err);
     }
-  };
+  }, [selectedCells, activeSheetIndex]);
 
   useEffect(() => {
     const handleKeydown = (event) => {

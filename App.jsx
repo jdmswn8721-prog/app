@@ -803,11 +803,12 @@ function App() {
       const updatedHtml = doc.body.innerHTML || '';
 
       if (container) {
+        const previousHtml = container.innerHTML;
         container.innerHTML = updatedHtml;
         refreshCellIds(container);
 
         if (!validateTableStructure(container)) {
-          restoreTableHtml(container, currentHtml);
+          restoreTableHtml(container, previousHtml);
           setError('셀 삭제로 인해 표 구조가 깨져 작업을 되돌렸습니다.');
           return;
         }
@@ -1043,7 +1044,6 @@ function App() {
         : currentSheet.content;
 
       tableHtml = getPureTableHtml(tableHtml);
-      tableHtml = removeEmptyRowsAndCols(tableHtml);
       tableHtml = applyInlineStyles(tableHtml);
       tableHtml = formatTableByRows(tableHtml);
 
@@ -1098,7 +1098,6 @@ ${tableHtml}
             ? tableRefs.current[index].innerHTML
             : sheet.content;
           tableHtml = getPureTableHtml(tableHtml);
-          tableHtml = removeEmptyRowsAndCols(tableHtml);
           tableHtml = applyInlineStyles(tableHtml);
           tableHtml = formatTableByRows(tableHtml);
           return `<h2 style="margin-top:30px;margin-bottom:10px">${sheet.name}</h2>\n${tableHtml}`;
@@ -1167,7 +1166,6 @@ ${allTables}
 
       let tableHtml = container.innerHTML;
       tableHtml = getPureTableHtml(tableHtml);
-      tableHtml = removeEmptyRowsAndCols(tableHtml);
 
       let jsonEntry;
 
@@ -1240,7 +1238,6 @@ ${allTables}
           ? tableRefs.current[index].innerHTML
           : sheet.content;
         tableHtml = getPureTableHtml(tableHtml);
-        tableHtml = removeEmptyRowsAndCols(tableHtml);
 
         let tempElement = null;
         let shouldRemoveTemp = false;
@@ -1562,7 +1559,6 @@ ${allTables}
                         : currentSheet.content;
 
                       tableHtml = getPureTableHtml(tableHtml);
-                      tableHtml = removeEmptyRowsAndCols(tableHtml);
                       tableHtml = applyInlineStyles(tableHtml);
                       tableHtml = formatTableByRows(tableHtml);
 

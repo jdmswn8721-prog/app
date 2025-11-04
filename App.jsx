@@ -106,6 +106,7 @@ function App() {
   const [error, setError] = useState('');
   const [fileName, setFileName] = useState('');
   const tableRefs = useRef([]);
+  const editSessionRef = useRef({ active: false, snapshot: '', sheetIndex: null });
 
   const [selectedCells, setSelectedCells] = useState(new Set());
   const [isSelecting, setIsSelecting] = useState(false);
@@ -393,6 +394,7 @@ function App() {
 
     const cell = e.target;
     if (cell.tagName !== 'TD' && cell.tagName !== 'TH') return;
+    if (cell.isContentEditable) return;
 
     if (e.detail === 2) {
       cell.contentEditable = true;
@@ -443,6 +445,7 @@ function App() {
 
     const cell = e.target;
     if (cell.tagName !== 'TD' && cell.tagName !== 'TH') return;
+    if (cell.isContentEditable) return;
 
     if (e.detail === 2) return;
 
@@ -470,6 +473,7 @@ function App() {
 
     const cell = e.target;
     if (cell.tagName !== 'TD' && cell.tagName !== 'TH') return;
+    if (cell.isContentEditable) return;
 
     let cellId = cell.getAttribute('data-cell-id');
     if (!cellId) {
@@ -586,6 +590,17 @@ function App() {
     if (viewMode !== 'edit') return;
     const cell = e.target;
     if (cell.tagName === 'TD' || cell.tagName === 'TH') {
+      const container = tableRefs.current[activeSheetIndex];
+      if (
+        container &&
+        (!editSessionRef.current.active || editSessionRef.current.sheetIndex !== activeSheetIndex)
+      ) {
+        editSessionRef.current = {
+          active: true,
+          snapshot: container.innerHTML,
+          sheetIndex: activeSheetIndex,
+        };
+      }
       cell.contentEditable = true;
       cell.focus();
     }
@@ -597,15 +612,31 @@ function App() {
     if (e.target.tagName === 'TD' || e.target.tagName === 'TH') {
       e.target.contentEditable = false;
 
-      if (tableRefs.current[activeSheetIndex]) {
-        const container = tableRefs.current[activeSheetIndex];
-        refreshCellIds(container);
-        const updatedSheets = sheets.map((sheet, idx) =>
-          idx === activeSheetIndex
-            ? { ...sheet, content: container.innerHTML }
-            : sheet
-        );
-        setSheets(updatedSheets);
+      const container = tableRefs.current[activeSheetIndex];
+      if (!container) {
+        editSessionRef.current = { active: false, snapshot: '', sheetIndex: null };
+        return;
+      }
+
+      refreshCellIds(container);
+      const containerHtml = container.innerHTML;
+
+      setSheets((prev) =>
+        prev.map((sheet, idx) =>
+          idx === activeSheetIndex ? { ...sheet, content: containerHtml } : sheet
+        )
+      );
+
+      if (
+        editSessionRef.current.active &&
+        editSessionRef.current.sheetIndex === activeSheetIndex
+      ) {
+        const snapshot = editSessionRef.current.snapshot || '';
+        if (snapshot !== containerHtml) {
+          setUndoStack((prev) => [...prev, snapshot]);
+          setRedoStack([]);
+        }
+        editSessionRef.current = { active: false, snapshot: '', sheetIndex: null };
       }
     }
   };
@@ -719,6 +750,7 @@ function App() {
       setUndoStack((prev) => [...prev, previousHtml]);
       setRedoStack([]);
       setSelectedCells(new Set());
+      editSessionRef.current = { active: false, snapshot: '', sheetIndex: null };
       setError('');
     } catch (err) {
       restoreTableHtml(container, previousHtml);
@@ -740,6 +772,7 @@ function App() {
     const previousHtml = container.innerHTML;
 
     try {
+      refreshCellIds(container);
       const rows = Array.from(table.querySelectorAll('tr'));
       const cellsToClear = new Map();
 
@@ -752,6 +785,15 @@ function App() {
           }
         });
       });
+
+      if (cellsToClear.size === 0) {
+        selectedCells.forEach((cellId) => {
+          const fallback = container.querySelector(`[data-cell-id="${cellId}"]`);
+          if (fallback) {
+            cellsToClear.set(cellId, fallback);
+          }
+        });
+      }
 
       if (cellsToClear.size === 0) {
         setError('삭제할 셀을 찾을 수 없습니다.');
@@ -780,6 +822,7 @@ function App() {
       setUndoStack((prev) => [...prev, previousHtml]);
       setRedoStack([]);
       setSelectedCells(new Set());
+      editSessionRef.current = { active: false, snapshot: '', sheetIndex: null };
       setError('');
     } catch (err) {
       restoreTableHtml(container, previousHtml);
@@ -787,6 +830,30 @@ function App() {
       console.error('셀 삭제 오류:', err);
     }
   };
+
+  useEffect(() => {
+    const handleKeydown = (event) => {
+      if (viewMode !== 'edit') return;
+      if (selectedCells.size === 0) return;
+
+      const target = event.target;
+      if (target instanceof HTMLElement) {
+        if (target.isContentEditable) return;
+        const tagName = target.tagName;
+        if (tagName === 'INPUT' || tagName === 'TEXTAREA' || tagName === 'SELECT') return;
+      }
+
+      if (event.key === 'Delete' || event.key === 'Backspace') {
+        event.preventDefault();
+        handleDeleteCells();
+      }
+    };
+
+    document.addEventListener('keydown', handleKeydown);
+    return () => {
+      document.removeEventListener('keydown', handleKeydown);
+    };
+  }, [viewMode, selectedCells, handleDeleteCells]);
 
   const handleUndo = () => {
     if (undoStack.length === 0 || !tableRefs.current[activeSheetIndex]) {
@@ -811,6 +878,7 @@ function App() {
       );
 
       setSelectedCells(new Set());
+      editSessionRef.current = { active: false, snapshot: '', sheetIndex: null };
       setError('');
     } catch (err) {
       setError('되돌리기 중 오류가 발생했습니다: ' + err.message);
@@ -841,6 +909,7 @@ function App() {
       );
 
       setSelectedCells(new Set());
+      editSessionRef.current = { active: false, snapshot: '', sheetIndex: null };
       setError('');
     } catch (err) {
       setError('다시 실행 중 오류가 발생했습니다: ' + err.message);
@@ -1079,6 +1148,7 @@ ${allTables}
     setError('');
     setFileName('');
     tableRefs.current = [];
+    editSessionRef.current = { active: false, snapshot: '', sheetIndex: null };
     const fileInput = document.querySelector('input[type="file"]');
     if (fileInput) fileInput.value = '';
   };
